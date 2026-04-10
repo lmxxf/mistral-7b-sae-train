@@ -1,0 +1,3 @@
+[submodule "json_sc_semc"]
+	path = json_sc_semc
+	url = git@github.com:zhaosanshi/json_sc_semc.git
