@@ -40,7 +40,7 @@ OUTPUT_DIR = "/workspace/mistral-7b-sae-train/sae_checkpoints"
 
 # ===== 超参 =====
 D_IN = 4096            # Mistral-7B hidden dim
-D_SAE = 65536          # 字典大小 64K (16x expansion)
+D_SAE = 16384          # 字典大小 16K (4x expansion, 省内存且特征更容易检查)
 CONTEXT_SIZE = 256     # token 窗口
 BATCH_SIZE = 4096      # tokens per batch
 TOTAL_STEPS = 12_000   # 训练步数（快速验证版）
@@ -144,8 +144,8 @@ def train_single_layer(layer: int):
         training_tokens=TOTAL_TOKENS,
 
         # --- 数据加载 ---
-        n_batches_in_buffer=64,
-        store_batch_size_prompts=16,
+        n_batches_in_buffer=8,     # 64→8, 激活缓存从~4.3GB降到~0.5GB
+        store_batch_size_prompts=4, # 16→4, 每次喂给模型的prompt数减少
 
         # --- 设备 ---
         device="cuda",
