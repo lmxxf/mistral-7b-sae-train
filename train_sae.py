@@ -144,7 +144,7 @@ def train_single_layer(layer: int):
         training_tokens=TOTAL_TOKENS,
 
         # --- 数据加载 ---
-        n_batches_in_buffer=8,     # 64→8, 激活缓存从~4.3GB降到~0.5GB
+        n_batches_in_buffer=16,    # 64→16, SAELens要求buffer≥batch，8太小会报错
         store_batch_size_prompts=4, # 16→4, 每次喂给模型的prompt数减少
 
         # --- 设备 ---
