@@ -200,6 +200,41 @@ SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对
 
 权重上传到 `lmxxf/mistral-7b-sae-layer16`。
 
+### SAE 特征干预实验 ✅
+
+用 `intervene_sae.py` 在 Layer 16 hook 点做特征消融：SAE encode → clamp 目标特征为 0 → SAE decode → 替换原始激活。三级干预逐步加码。
+
+**干预特征配置**：
+- Light (1 feat)：Feature 2122（`":` 键值分隔符）
+- Medium (3 feat)：+9353（`{"`）+1000（`[`）
+- Heavy (10 feat)：全部 top-10 JSON 标点偏好特征
+
+**测试 prompt**：5 个语义类（car/person/book/restaurant/school）+ 2 个无意义类（blonf/trelm），贪婪解码 max 200 token。
+
+**结果：发现两类行为模式**
+
+**模式 A：完全崩溃（car、school、blonf）**
+- light 干预就直接输出空 code block（` ```\n\n``` `），SC 崩、SemC 也崩
+- 和 LEACE 的"尖锐相变"行为一致
+
+**模式 B：渐进退化（person、book、restaurant）** ← 关键发现
+- light/medium 干预后 SC 依然通过（json.loads 成功），格式略变（缩进减少）
+- heavy 干预后 SC 崩溃，但 **SemC 完全保留**
+- 例：book + heavy → `"title": "The Great Gatsby", "author: "F. Scott Fitzgerald "pages: 176` → 引号/冒号打乱（SC❌），但书名作者页数全在（SemC 保留）
+- 例：person + heavy → `"name": "John", "age: 25 "city": "New York"` → 结构破损，语义完整
+
+**这是 LEACE 在 Mistral-7B 上 20+ 配置都做不到的事：SC 崩溃而 SemC 保留。**
+
+| | LEACE（赵磊 20+ 配置） | SAE 干预（本实验） |
+|---|---|---|
+| Mistral-7B 双分离 | ❌ 全部尖锐相变 | ✅ 部分 prompt 实现 |
+| 行为模式 | 只有"不穿"和"全穿" | 存在渐进退化区间 |
+| 语义保留 | 结构崩时语义同步崩 | 结构崩时语义可保留 |
+
+**SemC 评分说明**：绝对值偏低（0.15~0.55）是因为 content_words 列表过宽（car 词表含 toyota/honda/ford/bmw/tesla 等十几个，模型只输出一个）。关键指标是干预前后 SemC 不变。
+
+**模式 A 的原因推测**：这些 prompt 的 JSON 生成可能强依赖 Layer 16 的结构特征，一旦被干预就无法启动生成（直接输出空 code block）。模式 B 的 prompt 可能有其他层的冗余路径支撑部分生成能力。
+
 ### 文件（更新）
 
 | 文件 | 用途 |
@@ -207,11 +242,15 @@ SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对
 | `train_sae.py` | SAE 训练脚本 |
 | `validate_sae.py` | SAE 验证 v1（含 BOS） |
 | `validate_sae_v2.py` | SAE 验证 v2（排除 BOS） |
+| `intervene_sae.py` | **SAE 特征干预实验 ✅** |
 | `output/cfg.json` | Layer 16 训练配置（已手动修复） |
-| `output/sae_weights.safetensors` | **Layer 16 SAE 权重 ✅** |
+| `output/sae_weights.safetensors` | Layer 16 SAE 权重 |
+| `output/intervention_results.json` | **干预实验原始结果** |
 | `temp-cli.md` | 临时命令备忘（可删） |
 
 ### 下一步
 
-- 干预实验：关掉某个 JSON 结构特征，看模型生成怎么变
-- 写公众号（SAE 科普 + Mistral 内部结构可视化）
+- 分析模式 A vs 模式 B 的差异：为什么有些 prompt 全崩有些渐进退化
+- 考虑训更多层的 SAE（L8、L22）做多层联合干预
+- 将结果反馈赵磊：SAE 路径可行，help-v1 里"SAE 不可行"的判断已过时
+- 公众号 151 期补完干预实验结果
