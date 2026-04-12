@@ -17,6 +17,7 @@ Mistral-7B SAE 训练脚本
 """
 
 import argparse
+import json
 import os
 
 # 强制离线模式，容器里没网
