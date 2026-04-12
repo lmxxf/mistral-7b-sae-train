@@ -161,7 +161,61 @@ def train_single_layer(layer: int):
     )
 
     runner = LanguageModelSAETrainingRunner(cfg)
-    sae = runner.run()
+    try:
+        sae = runner.run()
+    except TypeError as e:
+        if "not JSON serializable" in str(e):
+            # SAELens bug: 保存 cfg.json 时试图序列化 hf_model 对象
+            # 训练已完成，只是保存 cfg 时崩了，手动补救
+            print(f"\n⚠️  SAELens 保存 cfg.json 时报错（已知 bug），手动保存...")
+            sae = runner.sae
+
+            # 手动保存权重和 cfg
+            save_dir = os.path.join(OUTPUT_DIR, run_name)
+            os.makedirs(save_dir, exist_ok=True)
+
+            # 保存权重
+            from safetensors.torch import save_file
+            state_dict = sae.state_dict()
+            save_file(state_dict, os.path.join(save_dir, "sae_weights.safetensors"))
+
+            # 手动写干净的 cfg.json（不含 hf_model）
+            clean_cfg = {
+                "device": "cuda",
+                "d_sae": D_SAE,
+                "apply_b_dec_to_input": True,
+                "reshape_activations": "none",
+                "d_in": D_IN,
+                "dtype": "float32",
+                "metadata": {
+                    "sae_lens_version": "6.39.0",
+                    "sae_lens_training_version": "6.39.0",
+                    "dataset_path": DATASET_PATH,
+                    "hook_name": hook_name,
+                    "model_name": "mistralai/Mistral-7B-Instruct-v0.1",
+                    "model_class_name": "HookedTransformer",
+                    "hook_head_index": None,
+                    "context_size": CONTEXT_SIZE,
+                    "seqpos_slice": [None],
+                    "model_from_pretrained_kwargs": {
+                        "center_writing_weights": False,
+                    },
+                },
+                "architecture": "jumprelu",
+                "model_name": "mistralai/Mistral-7B-Instruct-v0.1",
+                "hook_name": hook_name,
+                "hook_layer": layer,
+                "hook_head_index": None,
+                "context_size": CONTEXT_SIZE,
+                "prepend_bos": True,
+                "normalize_activations": "expected_average_only_in",
+            }
+            with open(os.path.join(save_dir, "cfg.json"), "w") as f:
+                json.dump(clean_cfg, f, indent=2)
+
+            print(f"✅ 手动保存完成: {save_dir}")
+        else:
+            raise
     print(f"\n✅ Layer {layer} SAE 训练完成，保存在 {OUTPUT_DIR}/{run_name}")
     return sae
 
