@@ -87,8 +87,66 @@ Layer 16 SAE 训练中，但 Spark 反复卡死（见 4-11 记录）。
 
 **16K 字典 vs 64K**：Anthropic 原始论文用过 4x expansion，特征少但更容易人工检查。64K 有 65536 个特征，找 JSON 结构特征要翻到天荒地老。16K 对写公众号够了。
 
+### buffer 报错修复
+
+`n_batches_in_buffer=8` 太小，SAELens 的 mixing_buffer 要求 buffer size ≥ batch size，报错：
+```
+ValueError: Buffer size must be greater than or equal to batch size
+```
+改 `n_batches_in_buffer` 8→16，修复。
+
+### ✅ Layer 16 训练成功（2026-04-11 夜间 → 4-12 凌晨）
+
+改参数后重跑，12000 步全部跑完。中间 Windows 电脑重启导致 ssh 断开，但训练在容器里已经跑完了。
+
+**输出文件**（注意：实际存在 `output/` 而非 `sae_checkpoints/`，SAELens 默认行为）：
+```
+output/
+├── cfg.json                  # 训练配置
+└── sae_weights.safetensors   # SAE 权重
+```
+
+**最终训练配置**：
+| 参数 | 值 |
+|---|---|
+| 模型 | Mistral-7B-Instruct-v0.1 |
+| 目标层 | Layer 16 (hook_resid_post) |
+| SAE 架构 | JumpReLU |
+| 字典大小 | 16384 (4x expansion) |
+| 训练 tokens | ~49M |
+| 训练步数 | 12000 |
+| n_batches_in_buffer | 16 |
+| store_batch_size_prompts | 4 |
+| 训练时长 | 约 10 小时 |
+
+**训练中间指标**（800 步时）：
+- mse_loss: 2060（重建误差，正常范围）
+- l0_loss: 293（平均每 token 激活 293/16384 = 1.8% 特征，稀疏度合理）
+
+### 教训
+
+**长任务必须用 tmux**：ssh 断开 = 进程被杀（SIGHUP）。下次：
+```
+tmux new -s sae
+python train_sae.py
+# Ctrl+B, D 退出，关电脑不影响
+# 回来: tmux attach -t sae
+```
+这次是运气好跑完了才断的。
+
+### 文件（更新）
+
+| 文件 | 用途 |
+|---|---|
+| `train_sae.py` | SAE 训练脚本 |
+| `output/cfg.json` | Layer 16 训练配置 |
+| `output/sae_weights.safetensors` | **Layer 16 SAE 权重 ✅** |
+| `sae_checkpoints/` | 空（SAELens 没用这个目录） |
+
 ### 下一步
 
-- 用新参数重跑 `python train_sae.py`（默认 layer 16），看能不能跑完 12000 步
-- 跑通后再考虑扩层
-- 目的已从赵磊的论文实验转为**写公众号**（SAE 科普 + Mistral 内部结构可视化）
+- **在 Spark 上开新 session**，加载训好的 SAE，开始玩：
+  1. 喂 JSON 文本和自然语言文本，找哪些特征在 JSON 上高激活（JSON 结构特征）
+  2. 可视化特征的激活 pattern（哪些 token 触发）
+  3. 关掉某个结构特征，看模型输出怎么变
+- 目的：**写公众号**（SAE 科普 + Mistral 内部结构可视化）
