@@ -145,8 +145,73 @@ python train_sae.py
 
 ### 下一步
 
-- **在 Spark 上开新 session**，加载训好的 SAE，开始玩：
-  1. 喂 JSON 文本和自然语言文本，找哪些特征在 JSON 上高激活（JSON 结构特征）
-  2. 可视化特征的激活 pattern（哪些 token 触发）
-  3. 关掉某个结构特征，看模型输出怎么变
-- 目的：**写公众号**（SAE 科普 + Mistral 内部结构可视化）
+- 干预实验：关掉某个 JSON 结构特征，看模型生成怎么变
+- 写公众号（SAE 科普 + Mistral 内部结构可视化）
+
+---
+
+## 2026-04-12
+
+### SAE 验证
+
+写了两版验证脚本，确认 SAE 训练质量：
+
+**v1 (`validate_sae.py`)**：三板斧全过，但 top-20 特征被 BOS token (`<s>`) 霸占（激活值 60~115，远超正常 token）。
+
+**v2 (`validate_sae_v2.py`)**：排除 BOS token 后重跑。
+
+**定量指标**：
+| 指标 | v1（含 BOS） | v2（排除 BOS） | 说明 |
+|------|-------------|---------------|------|
+| Explained Variance | **0.9622** ✅ | 0.4747 | v2 下降是因为去掉 BOS 后方差从 0.30 暴跌到 0.02，MSE 几乎不变（0.0114→0.0116），EV 在低方差数据上不稳定，不代表质量差 |
+| MSE | 0.0114 | 0.0116 | 几乎一样，重建质量没问题 |
+| L0 | 79.4 ✅ | 56.9 ✅ | 每 token 平均激活 57~79 / 16384 个特征，稀疏度好 |
+
+**特征可解释性（v2，排除 BOS 后的 top-20）**：
+
+JSON 侧找到了清晰的结构特征：
+- Feature 1000：`[` 方括号
+- Feature 11062：`{"` JSON 对象开头
+- Feature 4765：`}`, `}}}`, `}}` 闭合括号
+- Feature 2918：`"`, `":` 引号/键值
+- Feature 200：`id`, `title`, `tags` — JSON 键名
+- Feature 9459：`_` 下划线（`user_id`, `app_user`）
+
+自然语言侧完全不同的特征分布：
+- Feature 5088：句首词 `In`, `The`
+- Feature 16167：`early`, `morning` 时间意象
+- Feature 8350：`morning`, `night`, `light` 时间/光线语义簇
+
+**两侧 top-20 几乎零重叠** — SAE 确实把 JSON 结构和自然语言语义分到了不同特征上。
+
+JSON 标点偏好特征 top-10 全部 ratio > 1e8（只在 JSON 标点上亮，非标点激活为零）：
+- Feature 14474 / 15086：`"` 引号
+- Feature 442：`"`, `{"` 对象开头
+- Feature 1978：`,`, `",` 分隔符
+- Feature 2122：`":` 键值分隔符
+- Feature 9353：`{"` 对象开头
+- Feature 9582：`"]`, `}]` 闭合
+
+### cfg.json 损坏修复
+
+SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对象），导致文件在 546 字节处截断。手动重建了合法的 cfg.json。
+
+### 上传 HuggingFace
+
+权重上传到 `lmxxf/mistral-7b-sae-layer16`。
+
+### 文件（更新）
+
+| 文件 | 用途 |
+|---|---|
+| `train_sae.py` | SAE 训练脚本 |
+| `validate_sae.py` | SAE 验证 v1（含 BOS） |
+| `validate_sae_v2.py` | SAE 验证 v2（排除 BOS） |
+| `output/cfg.json` | Layer 16 训练配置（已手动修复） |
+| `output/sae_weights.safetensors` | **Layer 16 SAE 权重 ✅** |
+| `temp-cli.md` | 临时命令备忘（可删） |
+
+### 下一步
+
+- 干预实验：关掉某个 JSON 结构特征，看模型生成怎么变
+- 写公众号（SAE 科普 + Mistral 内部结构可视化）
