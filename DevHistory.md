@@ -315,7 +315,57 @@ MSE 从浅到深递增（0.002 → 0.012 → 0.052），越深层信息越密重
 | `sae_checkpoints/mistral7b_sae_L8_64k/` | **Layer 8 SAE 权重 ✅** |
 | `sae_checkpoints/mistral7b_sae_L22_64k/` | **Layer 22 SAE 权重 ✅** |
 
+### 三层联合干预实验 ✅
+
+`intervene_multilayer.py`：5 个干预级别 × 7 个 prompt = 35 次生成。
+
+**干预级别**：
+- baseline：无干预
+- L16_only：L16 top-10 JSON 标点特征
+- shallow_only：L8 top-10
+- deep_only：L22 top-10
+- all_layers：L8+L16+L22 top-10（共 30 个特征）
+
+**汇总结果（语义类 prompt）**：
+
+| 级别 | SC | Avg SemC | Collapse | 特点 |
+|---|---|---|---|---|
+| baseline | 100% | 0.28 | 0% | 正常 |
+| L16_only | 0% | 0.00 | 80% | 大面积崩溃，输出 `` ```---``` `` |
+| shallow_only (L8) | 0% | 0.07 | 60% | 死循环结构符号 `{{{[[[((( ` |
+| **deep_only (L22)** | **0%** | **0.12** | **0%** | **SC 全崩但零崩溃！语义保留** |
+| all_layers | 0% | 0.07 | 20% | 加了 L8+L16 反而崩溃率上升 |
+
+**核心发现：L22 深层干预是唯一实现"零崩溃"的方案**
+
+L22 干预的具体输出：
+- restaurant: `"name": " The Fat Cat" "cuisine": " New American" "rating": "3.5" "address": " 123 Main St. "` → 格式坏了但语义全在
+- school: `"name": " Lincoln High School", "address": " 12th Avenue", "founded": "1968,,", "teachers": ""` → 结构破损但学校名地址年份都在
+- book: `"title" : " The Road to Rio ", "author" : " Clive Barkham ", "pages" : " 100 pages "` → 键值对格式变了但语义丰富
+
+**为什么不同层的干预效果差异这么大**：
+- L8（浅层）编码的是语法标点级特征——关掉后模型连基本的 token 序列都组织不了，陷入结构符号死循环
+- L16（中层）类似——干预太底层，模型失去基本输出能力
+- L22（深层）编码的是输出规划级特征——关掉后模型不知道"该用 JSON 格式输出"，但还能生成有意义的内容
+
+**结论：要做精确的结构/语义分离，得在深层动刀。浅层/中层的标点特征太基础，关掉等于把嘴缝上了。深层的规划特征是"格式决策"层面的，关掉只影响输出格式不影响内容。**
+
+### 文件（更新）
+
+| 文件 | 用途 |
+|---|---|
+| `train_sae.py` | SAE 训练脚本（已修 import json + log_threshold 转换） |
+| `validate_sae.py` | SAE 验证 v1（含 BOS） |
+| `validate_sae_v2.py` | SAE 验证 v2（排除 BOS，支持 --layer/--sae-path） |
+| `intervene_sae.py` | SAE 特征干预实验（单层 L16） |
+| `intervene_multilayer.py` | **三层联合干预实验 ✅** |
+| `output/` | Layer 16 SAE 权重 + cfg + 干预结果 |
+| `output/intervention_multilayer_results.json` | **三层干预原始结果** |
+| `sae_checkpoints/mistral7b_sae_L8_64k/` | Layer 8 SAE 权重 |
+| `sae_checkpoints/mistral7b_sae_L22_64k/` | Layer 22 SAE 权重 |
+
 ### 下一步
 
-- 三层（L8+L16+L22）联合干预实验：同时消融三层的 JSON 结构特征，看模式 A 的 prompt 能不能也实现渐进退化
-- 浅层干预 vs 深层干预的效果对比：关掉 L8 的标点特征 vs 关掉 L22 的语义特征，效果有什么不同
+- L22 单层精细干预：不用 top-10 全关，试 top-3 / top-5，找最小必要干预集
+- 公众号素材：三层对比的可视化
+- 更新给赵磊的结论：深层干预 > 浅层干预，L22 是做双分离的最佳层
