@@ -175,9 +175,11 @@ def train_single_layer(layer: int):
             save_dir = os.path.join(OUTPUT_DIR, run_name)
             os.makedirs(save_dir, exist_ok=True)
 
-            # 保存权重
+            # 保存权重（转换为推理态：log_threshold → threshold）
             from safetensors.torch import save_file
             state_dict = sae.state_dict()
+            if "log_threshold" in state_dict and "threshold" not in state_dict:
+                state_dict["threshold"] = torch.exp(state_dict.pop("log_threshold"))
             save_file(state_dict, os.path.join(save_dir, "sae_weights.safetensors"))
 
             # 手动写干净的 cfg.json（不含 hf_model）

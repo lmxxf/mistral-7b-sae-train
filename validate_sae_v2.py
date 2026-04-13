@@ -1,17 +1,20 @@
 """
 Mistral-7B SAE 验证脚本 v2
-验证已训好的 Layer 16 SAE 的质量：重建质量、稀疏度、特征可解释性
+验证已训好的 SAE 的质量：重建质量、稀疏度、特征可解释性
 
 v2 改进：排除 BOS token (<s>)
   BOS token 激活值 60~115，远超正常 token（通常 <10），
   会严重扭曲统计指标和特征排序。v2 在所有验证中过滤掉每段文本的第一个 token。
 
 用法：
-  python validate_sae_v2.py
+  python validate_sae_v2.py                          # 默认 Layer 16
+  python validate_sae_v2.py --layer 8 --sae-path /workspace/mistral-7b-sae-train/sae_checkpoints/mistral7b_sae_L8_64k/
+  python validate_sae_v2.py --layer 22 --sae-path /workspace/mistral-7b-sae-train/sae_checkpoints/mistral7b_sae_L22_64k/
 
 硬件：DGX Spark GB10, 128GB 统一内存
 """
 
+import argparse
 import os
 
 # 强制离线模式，容器里没网
@@ -22,10 +25,10 @@ import json
 import torch
 import numpy as np
 
-# ===== 路径 =====
+# ===== 路径（默认值，可被命令行参数覆盖） =====
 MODEL_PATH = "/workspace/models/Mistral-7B-Instruct-v0.1"
-SAE_PATH = "/workspace/mistral-7b-sae-train/output/"
-HOOK_NAME = "blocks.16.hook_resid_post"
+DEFAULT_SAE_PATH = "/workspace/mistral-7b-sae-train/output/"
+DEFAULT_LAYER = 16
 
 
 # ===== 环境配置（复用 train_sae.py 的逻辑） =====
@@ -129,18 +132,18 @@ def load_model():
     return model
 
 
-def load_sae():
+def load_sae(sae_path):
     """加载训好的 SAE"""
     from sae_lens import SAE
 
-    print("加载 SAE...")
-    sae = SAE.load_from_pretrained(SAE_PATH, device="cuda")
+    print(f"加载 SAE: {sae_path}")
+    sae = SAE.load_from_pretrained(sae_path, device="cuda")
     sae.eval()
     print(f"SAE 加载完成: d_in={sae.cfg.d_in}, d_sae={sae.cfg.d_sae}\n")
     return sae
 
 
-def get_activations(model, texts):
+def get_activations(model, texts, hook_name):
     """获取一批文本在指定 hook 的激活，排除每段文本的第一个 token（BOS <s>）"""
     all_activations = []
     all_tokens = []
@@ -148,8 +151,8 @@ def get_activations(model, texts):
 
     for text in texts:
         tokens = model.to_tokens(text)
-        _, cache = model.run_with_cache(tokens, names_filter=[HOOK_NAME])
-        activations = cache[HOOK_NAME]  # [1, seq_len, d_in]
+        _, cache = model.run_with_cache(tokens, names_filter=[hook_name])
+        activations = cache[hook_name]  # [1, seq_len, d_in]
 
         # 去掉第一个 token（BOS）：从 index 1 开始
         act_no_bos = activations.squeeze(0)[1:]   # [seq_len-1, d_in]
@@ -243,7 +246,7 @@ def validate_sparsity(sae, all_activations):
 
 # ===== 验证 3：特征可解释性 =====
 
-def validate_interpretability(model, sae, json_texts, natural_texts):
+def validate_interpretability(model, sae, json_texts, natural_texts, hook_name):
     """对比 JSON vs 自然语言文本的特征激活模式（排除 BOS token）"""
     print("=" * 60)
     print("  验证 3：特征可解释性（Feature Interpretability）")
@@ -261,8 +264,8 @@ def validate_interpretability(model, sae, json_texts, natural_texts):
 
         for text in texts:
             tokens = model.to_tokens(text)
-            _, cache = model.run_with_cache(tokens, names_filter=[HOOK_NAME])
-            activations = cache[HOOK_NAME].squeeze(0).to(torch.float32)  # [seq_len, d_in]
+            _, cache = model.run_with_cache(tokens, names_filter=[hook_name])
+            activations = cache[hook_name].squeeze(0).to(torch.float32)  # [seq_len, d_in]
 
             # 排除第一个 token（BOS）
             activations = activations[1:]  # [seq_len-1, d_in]
@@ -323,8 +326,8 @@ def validate_interpretability(model, sae, json_texts, natural_texts):
 
     for text in json_texts:
         tokens = model.to_tokens(text)
-        _, cache = model.run_with_cache(tokens, names_filter=[HOOK_NAME])
-        activations = cache[HOOK_NAME].squeeze(0).to(torch.float32)
+        _, cache = model.run_with_cache(tokens, names_filter=[hook_name])
+        activations = cache[hook_name].squeeze(0).to(torch.float32)
 
         # 排除第一个 token（BOS）
         activations = activations[1:]
@@ -385,9 +388,21 @@ def validate_interpretability(model, sae, json_texts, natural_texts):
 # ===== 主流程 =====
 
 def main():
+    parser = argparse.ArgumentParser(description="Validate SAE for Mistral-7B")
+    parser.add_argument("--layer", type=int, default=DEFAULT_LAYER,
+                        help=f"目标层，默认 {DEFAULT_LAYER}")
+    parser.add_argument("--sae-path", type=str, default=DEFAULT_SAE_PATH,
+                        help=f"SAE 权重目录，默认 {DEFAULT_SAE_PATH}")
+    args = parser.parse_args()
+
+    layer = args.layer
+    sae_path = args.sae_path
+    hook_name = f"blocks.{layer}.hook_resid_post"
+
     print("\n" + "=" * 60)
-    print("  Mistral-7B Layer 16 SAE 验证 (v2: 排除 BOS)")
-    print("  SAE 路径: " + SAE_PATH)
+    print(f"  Mistral-7B Layer {layer} SAE 验证 (v2: 排除 BOS)")
+    print(f"  SAE 路径: {sae_path}")
+    print(f"  Hook: {hook_name}")
     print("=" * 60 + "\n")
 
     # 环境配置
@@ -395,12 +410,12 @@ def main():
 
     # 加载模型和 SAE
     model = load_model()
-    sae = load_sae()
+    sae = load_sae(sae_path)
 
     # 收集所有文本的激活（验证 1 和 2 共用），已排除 BOS
     print("收集激活数据（排除 BOS token）...")
     all_texts = JSON_TEXTS + NATURAL_TEXTS
-    all_activations, all_tokens = get_activations(model, all_texts)
+    all_activations, all_tokens = get_activations(model, all_texts, hook_name)
     total_tokens = sum(a.shape[0] for a in all_activations)
     print(f"共 {total_tokens} 个 token（已排除 {len(all_texts)} 个 BOS）\n")
 
@@ -411,17 +426,15 @@ def main():
     l0 = validate_sparsity(sae, all_activations)
 
     # 验证 3：特征可解释性
-    validate_interpretability(model, sae, JSON_TEXTS, NATURAL_TEXTS)
+    validate_interpretability(model, sae, JSON_TEXTS, NATURAL_TEXTS, hook_name)
 
     # 总结
     print("=" * 60)
-    print("  验证总结 (v2: 排除 BOS token)")
+    print(f"  验证总结: Layer {layer} (v2: 排除 BOS token)")
     print("=" * 60)
     print(f"\n  Explained Variance:  {ev:.4f}  {'[PASS]' if ev > 0.85 else '[FAIL]'}")
     print(f"  MSE:                 {mse:.6f}")
     print(f"  L0 (avg features):   {l0:.1f}    {'[PASS]' if 50 <= l0 <= 500 else '[WARN]'}")
-    print(f"\n  v2 改进：所有验证均排除了 BOS token (<s>)，")
-    print(f"  避免 BOS 的异常高激活（60~115）扭曲统计和特征排序。")
     print(f"\n  请检查上方特征可解释性输出，确认是否存在 JSON 结构特征。")
     print()
 

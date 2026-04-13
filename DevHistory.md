@@ -241,7 +241,7 @@ SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对
 |---|---|
 | `train_sae.py` | SAE 训练脚本 |
 | `validate_sae.py` | SAE 验证 v1（含 BOS） |
-| `validate_sae_v2.py` | SAE 验证 v2（排除 BOS） |
+| `validate_sae_v2.py` | SAE 验证 v2（排除 BOS，支持 --layer 和 --sae-path 参数） |
 | `intervene_sae.py` | **SAE 特征干预实验 ✅** |
 | `output/cfg.json` | Layer 16 训练配置（已手动修复） |
 | `output/sae_weights.safetensors` | Layer 16 SAE 权重 |
@@ -250,7 +250,72 @@ SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对
 
 ### 下一步
 
-- 分析模式 A vs 模式 B 的差异：为什么有些 prompt 全崩有些渐进退化
-- 考虑训更多层的 SAE（L8、L22）做多层联合干预
-- 将结果反馈赵磊：SAE 路径可行，help-v1 里"SAE 不可行"的判断已过时
-- 公众号 151 期补完干预实验结果
+- 三层（L8+L16+L22）联合干预实验
+- 公众号后续期数：SAE 干预实验可视化
+
+---
+
+## 2026-04-13
+
+### L8 + L22 SAE 训练
+
+训练 Layer 8 和 Layer 22 的 SAE，与之前的 Layer 16 组成三层覆盖（浅层/中层/深层）。
+
+**踩坑记录**：
+
+1. **L8 第一次训练（4-12）**：训完 12000 步后崩在 SAELens 保存 cfg.json（同 L16 的 bug），但 fallback 代码里 `import json` 忘了加 → 权重没存下来，白跑 5 小时
+2. **L8 第二次训练（4-12~13）**：修了 `import json`，但 fallback 保存时用 `sae.state_dict()` 存的是训练态 key（`log_threshold`），加载时 SAELens 期望推理态 key（`threshold`）→ 权重存下来了但加载报错
+3. **L8 第三次训练（4-13）**：修了 `log_threshold → threshold` 转换，终于成功。同时用 `safetensors` 转换了已有的 L8/L22 权重文件
+
+**train_sae.py 修复内容**：
+- 加了 `import json`（顶部）
+- fallback 保存时 `log_threshold` → `torch.exp()` → `threshold`（训练态转推理态）
+
+**validate_sae_v2.py 改进**：
+- 加了 `--layer` 和 `--sae-path` 命令行参数，不再硬编码 Layer 16
+
+**训练结果**：
+
+| 层 | MSE (训练末) | L0 (训练末) | 训练时长 | 保存位置 |
+|---|---|---|---|---|
+| L8 | 911 | 267 | 5h | `sae_checkpoints/mistral7b_sae_L8_64k/` |
+| L16 | 903 | 266 | 10h | `output/` |
+| L22 | 1326 | 327 | 11.5h | `sae_checkpoints/mistral7b_sae_L22_64k/` |
+
+L22 比 L8/L16 慢一倍（1197 vs 2710 it/s）且 MSE/L0 更高——深层残差流信息更密，重建更难。
+
+### 三层验证结果
+
+| 层 | MSE (推理) | L0 (推理) | JSON标点特征 | 特征可解释性 |
+|---|---|---|---|---|
+| L8 | 0.0019 | 33.4 | ratio>1e8 ✅ | ✅ |
+| L16 | 0.0116 | 56.9 | ratio>1e8 ✅ | ✅ |
+| L22 | 0.0525 | 57.7 | ratio>1e8 ✅ | ✅ |
+
+MSE 从浅到深递增（0.002 → 0.012 → 0.052），越深层信息越密重建越难。三层都找到了 JSON 结构特征。
+
+**关键发现：浅层 vs 深层的 JSON 特征类型不同**
+
+| | L8 JSON top-20 | L22 JSON top-20 |
+|---|---|---|
+| 特征类型 | 语法标点级（`{`, `"`, `:`, `[`） | 语义概念级（system, credentials, Post, Alice） |
+| 说明 | 浅层编码的是"这里要放个引号" | 深层编码的是"这个值的含义是什么" |
+
+这印证了 Mistral "渐进展开型"——浅层压缩（eff_rank 低），深层展开（语义级特征涌现）。
+
+### 文件（更新）
+
+| 文件 | 用途 |
+|---|---|
+| `train_sae.py` | SAE 训练脚本（已修 import json + log_threshold 转换） |
+| `validate_sae.py` | SAE 验证 v1（含 BOS） |
+| `validate_sae_v2.py` | SAE 验证 v2（排除 BOS，支持 --layer/--sae-path） |
+| `intervene_sae.py` | SAE 特征干预实验 |
+| `output/` | Layer 16 SAE 权重 + cfg + 干预结果 |
+| `sae_checkpoints/mistral7b_sae_L8_64k/` | **Layer 8 SAE 权重 ✅** |
+| `sae_checkpoints/mistral7b_sae_L22_64k/` | **Layer 22 SAE 权重 ✅** |
+
+### 下一步
+
+- 三层（L8+L16+L22）联合干预实验：同时消融三层的 JSON 结构特征，看模式 A 的 prompt 能不能也实现渐进退化
+- 浅层干预 vs 深层干预的效果对比：关掉 L8 的标点特征 vs 关掉 L22 的语义特征，效果有什么不同
