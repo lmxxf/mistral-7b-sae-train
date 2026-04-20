@@ -4,7 +4,7 @@
 
 ### 起因
 
-赵磊用 LEACE 做 Mistral-7B 的 SC/SemC 双分离实验全翻车——20+ 配置都是尖锐相变，结构和语义一起崩。诊断结论：Mistral 的结构子空间和语义子空间纠缠（EUO=1.59），线性刀切不开。方案：训 SAE 升维解耦，精确干预 JSON 结构特征。
+ZL用 LEACE 做 Mistral-7B 的 SC/SemC 双分离实验全翻车——20+ 配置都是尖锐相变，结构和语义一起崩。诊断结论：Mistral 的结构子空间和语义子空间纠缠（EUO=1.59），线性刀切不开。方案：训 SAE 升维解耦，精确干预 JSON 结构特征。
 
 但其实就是想玩玩 SAE 😄
 
@@ -225,7 +225,7 @@ SAELens 保存 cfg.json 时试图序列化 `hf_model`（整个 PyTorch 模型对
 
 **这是 LEACE 在 Mistral-7B 上 20+ 配置都做不到的事：SC 崩溃而 SemC 保留。**
 
-| | LEACE（赵磊 20+ 配置） | SAE 干预（本实验） |
+| | LEACE（ZL 20+ 配置） | SAE 干预（本实验） |
 |---|---|---|
 | Mistral-7B 双分离 | ❌ 全部尖锐相变 | ✅ 部分 prompt 实现 |
 | 行为模式 | 只有"不穿"和"全穿" | 存在渐进退化区间 |
@@ -368,4 +368,87 @@ L22 干预的具体输出：
 
 - L22 单层精细干预：不用 top-10 全关，试 top-3 / top-5，找最小必要干预集
 - 公众号素材：三层对比的可视化
-- 更新给赵磊的结论：深层干预 > 浅层干预，L22 是做双分离的最佳层
+- 更新给ZL的结论：深层干预 > 浅层干预，L22 是做双分离的最佳层
+
+---
+
+## 2026-04-20
+
+### EMNLP 2026 冲刺：重训 SAE（两模型六层）
+
+**背景**：ZL定了 EMNLP 2026 主会（5/25 截止）。之前的 SAE 有两个方法论漏洞，审稿人必抓：
+
+1. **模型版本不一致**：train_sae.py 里 MODEL_PATH 写的是 v0.1，但ZL DAS 实验全在 v0.3 上跑。激活分布不一致，SAE 特征 clamping 对不上
+2. **训练数据分布不匹配**：原来用 OpenWebText（纯文本），但 DAS 实验在 chat template 下做（`[INST]...[/INST]`）。SAE 没见过 chat format 的激活分布，特征 clamping 脱分布
+
+**计划**：
+- Mistral-7B-Instruct-v0.3：L8 / L16 / L22 三层，~30h
+- Llama-3.1-8B-Instruct：L8 / L16 / L22 三层，~30h（跨模型复现）
+- Qwen 砍了，放 future work（36 天窗口精不必全）
+- ZL同步推 format specificity 对照实验（JSON vs XML/YAML），Codex 点名的 R2 防御
+
+### 改动 1：模型版本 v0.1 → v0.3
+
+train_sae.py：
+- `MODEL_PATH` 改为 `/workspace/models/Mistral-7B-Instruct-v0.3`
+- 新增 `TRANSFORMERLENS_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.1"`
+
+**TransformerLens 不认 v0.3 的原因**：不是单纯的白名单限制。TransformerLens 内部对每个模型架构维护了一套权重 key 转换映射（HuggingFace 的 `model.layers.0.self_attn.q_proj.weight` → TransformerLens 的 `blocks.0.attn.W_Q`），白名单（`OFFICIAL_MODEL_NAMES`）本质是"这个模型的转换映射我写好了"。v0.3 不在列表里只是因为维护者没跟上 Mistral 发版节奏——v0.1 和 v0.3 架构完全一样（32 层 / 4096 hidden dim / 同样的 attention），只是词表从 32000 扩到 32768（多了 function calling tokens）。所以用 v0.1 的名字注册、实际塞 v0.3 的权重完全可行，转换映射通用。
+
+**具体绕法**：
+- HF cache 软链：用 v0.1 的目录名，软链指向 v0.3 的文件
+- monkey-patch `AutoConfig.from_pretrained`：从 v0.3 的 config.json 补 `rope_theta` + 覆盖 `vocab_size=32768`
+- `hf_model` 参数：直接传 v0.3 的 PyTorch 模型，TransformerLens 从权重读 shape
+- cfg.json 里记录真实模型名 `mistralai/Mistral-7B-Instruct-v0.3`
+
+### 改动 2：训练数据 OpenWebText → lmsys-chat-1m
+
+**数据集**：`science-of-finetuning/lmsys-chat-1m-chat-formatted`（HuggingFace datasets repo，下载时要加 `--repo-type dataset`）
+
+**预处理脚本 `prepare_lmsys_dataset.py`**：
+- 从 lmsys 数据集的 `conversation` 字段取多轮对话 `[{role, content}, ...]`
+- 用 Mistral v0.3 的 `tokenizer.apply_chat_template(conv, tokenize=False)` 渲染成 `<s>[INST] 问题[/INST] 回答</s>` 格式
+- 过滤空/短文本后存成 parquet（`data/train-00000-of-00001.parquet`），SAELens 的 `load_dataset` 直接读 `text` 字段
+
+**为什么需要这步**：lmsys 数据集只预渲染了 llama3 和 qwen2.5 的 chat template（`text_llama3`、`text_qwen2_5` 字段），没有 Mistral 的。必须自己用 Mistral tokenizer 重新渲染。
+
+**预处理结果**：900,000 条对话 → 887,329 条（12,671 条过滤掉）
+
+**不加 Pile / JSON-heavy 数据的原因**：否则 SAE 会学成 JSON 专家，下游 JSON 干预实验循环论证。
+
+### 不改的部分
+
+| 参数 | 值 | 原因 |
+|---|---|---|
+| SAE 架构 | JumpReLU | Anthropic 同款，审稿人认 |
+| 字典大小 | 16384 (4x) | 够用且容易检查 |
+| 三层 | L8 / L16 / L22 | 浅/中/深覆盖，已验证有效 |
+| ~49M tokens/层 | 12000 步 × 4096 batch | 上次实测够收敛 |
+| LR / warmup / decay | 5e-5 / 1000 / 20% | 不动 |
+
+### 当前状态（2026-04-20）
+
+- ✅ lmsys 数据集下载并预处理完成
+- ✅ train_sae.py 已更新（v0.3 + lmsys）
+- 🔄 L8 训练中（tmux session `sae`）
+- ⏳ L16、L22 排队
+- 4-21 白天停电，只能先训一层
+
+### 文件（更新）
+
+| 文件 | 用途 |
+|---|---|
+| `train_sae.py` | SAE 训练脚本（**已改：v0.3 + lmsys**） |
+| `prepare_lmsys_dataset.py` | **lmsys 数据集预处理（新增）** |
+| `validate_sae.py` | SAE 验证 v1 |
+| `validate_sae_v2.py` | SAE 验证 v2 |
+| `intervene_sae.py` | SAE 特征干预实验（单层 L16） |
+| `intervene_multilayer.py` | 三层联合干预实验 |
+| `output/` | Layer 16 SAE 权重（旧版 v0.1，待替换） |
+| `sae_checkpoints/` | 新版 SAE 输出目录 |
+
+### 下一步
+
+- Mistral v0.3 三层训完后：validate_sae_v2.py 验证，确认对齐 DAS 激活
+- 训 Llama-3.1-8B-Instruct 三层（同样 lmsys chat-formatted）
+- ZL同步推 format specificity 对照实验

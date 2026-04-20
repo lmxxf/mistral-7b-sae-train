@@ -35,9 +35,11 @@ from sae_lens.saes.jumprelu_sae import JumpReLUTrainingSAEConfig
 
 
 # ===== 路径 =====
-MODEL_PATH = "/workspace/models/Mistral-7B-Instruct-v0.1"
-DATASET_PATH = "/workspace/datasets/openwebtext"
+MODEL_PATH = "/workspace/models/Mistral-7B-Instruct-v0.3"
+DATASET_PATH = "/workspace/datasets/lmsys_chat_mistral"
 OUTPUT_DIR = "/workspace/mistral-7b-sae-train/sae_checkpoints"
+# TransformerLens 不认 v0.3，用 v0.1 的名字骗它（架构一样，只是词表多了 768 token）
+TRANSFORMERLENS_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.1"
 
 # ===== 超参 =====
 D_IN = 4096            # Mistral-7B hidden dim
@@ -73,41 +75,45 @@ def train_single_layer(layer: int):
     @staticmethod
     def _patched_from_pretrained(*args, **kwargs):
         config = _orig_from_pretrained(*args, **kwargs)
+        # 从 v0.3 的 config.json 补齐 TransformerLens 需要的字段
+        import json as _json
+        config_path = os.path.join(MODEL_PATH, "config.json")
+        with open(config_path) as f:
+            raw = _json.load(f)
         if not hasattr(config, "rope_theta"):
-            # 从原始 JSON 里拿，默认 10000.0
-            import json
-            config_path = os.path.join(MODEL_PATH, "config.json")
-            with open(config_path) as f:
-                raw = json.load(f)
             config.rope_theta = raw.get("rope_theta", 10000.0)
+        # v0.3 词表 32768，覆盖 v0.1 的 32000
+        config.vocab_size = raw.get("vocab_size", config.vocab_size)
         return config
     transformers.AutoConfig.from_pretrained = _patched_from_pretrained
 
-    # 把本地模型路径注入 HF cache，让 TransformerLens 的 AutoConfig 能离线找到
+    # 把 v0.3 模型文件用 v0.1 的名字注入 HF cache（骗 TransformerLens）
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     link_name = os.path.join(cache_dir, "models--mistralai--Mistral-7B-Instruct-v0.1")
-    if not os.path.exists(link_name):
-        os.makedirs(cache_dir, exist_ok=True)
-        # 创建目录结构模拟 HF cache
-        os.makedirs(link_name, exist_ok=True)
-        snapshot_dir = os.path.join(link_name, "snapshots", "local")
-        os.makedirs(snapshot_dir, exist_ok=True)
-        # 软链所有文件
-        for f in os.listdir(MODEL_PATH):
-            src = os.path.join(MODEL_PATH, f)
-            dst = os.path.join(snapshot_dir, f)
-            if not os.path.exists(dst) and os.path.isfile(src):
-                os.symlink(src, dst)
-        # refs/main 指向 snapshot
-        refs_dir = os.path.join(link_name, "refs")
-        os.makedirs(refs_dir, exist_ok=True)
-        with open(os.path.join(refs_dir, "main"), "w") as fp:
-            fp.write("local")
-        print(f"已创建 HF cache 软链: {link_name}")
+    # 清理旧软链（可能指向真的 v0.1）
+    if os.path.exists(link_name):
+        import shutil
+        shutil.rmtree(link_name)
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(link_name, exist_ok=True)
+    snapshot_dir = os.path.join(link_name, "snapshots", "local")
+    os.makedirs(snapshot_dir, exist_ok=True)
+    # 软链 v0.3 的所有文件
+    for f in os.listdir(MODEL_PATH):
+        src = os.path.join(MODEL_PATH, f)
+        dst = os.path.join(snapshot_dir, f)
+        if not os.path.exists(dst) and os.path.isfile(src):
+            os.symlink(src, dst)
+    # refs/main 指向 snapshot
+    refs_dir = os.path.join(link_name, "refs")
+    os.makedirs(refs_dir, exist_ok=True)
+    with open(os.path.join(refs_dir, "main"), "w") as fp:
+        fp.write("local")
+    print(f"已创建 HF cache 软链: {link_name} -> {MODEL_PATH}")
 
     cfg = LanguageModelSAERunnerConfig(
         # --- 模型 ---
-        model_name="mistralai/Mistral-7B-Instruct-v0.1",
+        model_name=TRANSFORMERLENS_MODEL_NAME,
         model_class_name="HookedTransformer",
         hook_name=hook_name,
         model_from_pretrained_kwargs={
@@ -195,7 +201,7 @@ def train_single_layer(layer: int):
                     "sae_lens_training_version": "6.39.0",
                     "dataset_path": DATASET_PATH,
                     "hook_name": hook_name,
-                    "model_name": "mistralai/Mistral-7B-Instruct-v0.1",
+                    "model_name": "mistralai/Mistral-7B-Instruct-v0.3",
                     "model_class_name": "HookedTransformer",
                     "hook_head_index": None,
                     "context_size": CONTEXT_SIZE,
@@ -205,7 +211,7 @@ def train_single_layer(layer: int):
                     },
                 },
                 "architecture": "jumprelu",
-                "model_name": "mistralai/Mistral-7B-Instruct-v0.1",
+                "model_name": "mistralai/Mistral-7B-Instruct-v0.3",
                 "hook_name": hook_name,
                 "hook_layer": layer,
                 "hook_head_index": None,
