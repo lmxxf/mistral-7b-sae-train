@@ -426,13 +426,33 @@ train_sae.py：
 | ~49M tokens/层 | 12000 步 × 4096 batch | 上次实测够收敛 |
 | LR / warmup / decay | 5e-5 / 1000 / 20% | 不动 |
 
-### 当前状态（2026-04-20）
+### ✅ L8 训练完成（2026-04-20 夜间）
+
+SAELens 保存 cfg.json 时触发已知 bug（序列化 hf_model），fallback 代码兜住了。
+
+**验证结果**：
+
+| 指标 | 值 | 说明 |
+|---|---|---|
+| MSE | 0.0016 | 比旧版 v0.1 的 0.0019 更好 |
+| L0 | 71.2 | 稀疏度正常 |
+| EV | 0.33 | 排除 BOS 后低方差不稳定，不影响质量 |
+| JSON 标点特征 | ratio > 1e7 ✅ | top-10 全部通过 |
+
+JSON 侧 top-20 vs 自然语言侧 top-20 清晰分开，v0.3 + lmsys chat 数据训出的 SAE 质量确认没问题。
+
+### ✅ L16 训练完成（2026-04-21 凌晨）
+
+同样触发 SAELens cfg.json bug，fallback 兜住。待验证。
+
+### 当前状态（2026-04-21）
 
 - ✅ lmsys 数据集下载并预处理完成
 - ✅ train_sae.py 已更新（v0.3 + lmsys）
-- 🔄 L8 训练中（tmux session `sae`）
-- ⏳ L16、L22 排队
-- 4-21 白天停电，只能先训一层
+- ✅ L8 训练完成并验证通过
+- ✅ L16 训练完成，待验证
+- 🔄 L22 训练中
+- 4-21 白天停电
 
 ### 文件（更新）
 
@@ -445,10 +465,12 @@ train_sae.py：
 | `intervene_sae.py` | SAE 特征干预实验（单层 L16） |
 | `intervene_multilayer.py` | 三层联合干预实验 |
 | `output/` | Layer 16 SAE 权重（旧版 v0.1，待替换） |
-| `sae_checkpoints/` | 新版 SAE 输出目录 |
+| `sae_checkpoints/mistral7b_sae_L8_64k/` | **Layer 8 SAE 权重（v0.3 + lmsys）✅** |
+| `sae_checkpoints/mistral7b_sae_L16_64k/` | **Layer 16 SAE 权重（v0.3 + lmsys）✅** |
 
 ### 下一步
 
+- 来电后跑 L16 + L22：`python train_sae.py --layer 16 && python train_sae.py --layer 22`
 - Mistral v0.3 三层训完后：validate_sae_v2.py 验证，确认对齐 DAS 激活
 - 训 Llama-3.1-8B-Instruct 三层（同样 lmsys chat-formatted）
 - ZL同步推 format specificity 对照实验
