@@ -1,10 +1,27 @@
 # Mistral-7B Sparse Autoencoders (JumpReLU) — Layer 8, 16, 22
 
-Sparse Autoencoders (SAE) trained on residual stream activations of Mistral-7B-Instruct-v0.1 at three layers (shallow / middle / deep), using the JumpReLU architecture from Anthropic's *Scaling Monosemanticity*.
+Sparse Autoencoders (SAE) trained on residual stream activations of Mistral-7B-Instruct at three layers (shallow / middle / deep), using the JumpReLU architecture from Anthropic's *Scaling Monosemanticity*.
 
-在 Mistral-7B-Instruct-v0.1 的三层残差流（浅层/中层/深层）上训练的稀疏自编码器（SAE），使用 Anthropic *Scaling Monosemanticity* 论文中的 JumpReLU 架构。
+在 Mistral-7B-Instruct 的三层残差流（浅层/中层/深层）上训练的稀疏自编码器（SAE），使用 Anthropic *Scaling Monosemanticity* 论文中的 JumpReLU 架构。
 
-**Weights / 权重**:
+## Weights / 权重
+
+### v0.3 (recommended / 推荐)
+
+Trained on **Mistral-7B-Instruct-v0.3** with **lmsys-chat-1m** chat-formatted data. Use this version for DAS intervention experiments.
+
+基于 **Mistral-7B-Instruct-v0.3** + **lmsys-chat-1m** chat 格式数据训练。用于 DAS 干预实验请用此版本。
+
+- Layer 8: [lmxxf/mistral-7b-v03-sae-layer8](https://huggingface.co/lmxxf/mistral-7b-v03-sae-layer8)
+- Layer 16: [lmxxf/mistral-7b-v03-sae-layer16](https://huggingface.co/lmxxf/mistral-7b-v03-sae-layer16)
+- Layer 22: [lmxxf/mistral-7b-v03-sae-layer22](https://huggingface.co/lmxxf/mistral-7b-v03-sae-layer22)
+
+### v0.1 (legacy / 旧版)
+
+Trained on **Mistral-7B-Instruct-v0.1** with **OpenWebText**. Kept for reference.
+
+基于 **Mistral-7B-Instruct-v0.1** + **OpenWebText** 训练。保留供参考。
+
 - Layer 8: [lmxxf/mistral-7b-sae-layer8](https://huggingface.co/lmxxf/mistral-7b-sae-layer8)
 - Layer 16: [lmxxf/mistral-7b-sae-layer16](https://huggingface.co/lmxxf/mistral-7b-sae-layer16)
 - Layer 22: [lmxxf/mistral-7b-sae-layer22](https://huggingface.co/lmxxf/mistral-7b-sae-layer22)
@@ -17,36 +34,49 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 
 ## Training Configuration / 训练配置
 
-| Parameter / 参数 | Value / 值 |
-|---|---|
-| Base model / 基座模型 | `mistralai/Mistral-7B-Instruct-v0.1` (HuggingFace) |
-| Training dataset / 训练数据 | `Skylion007/openwebtext` (HuggingFace) |
-| Target layers / 目标层 | Layer 8, 16, 22 (`blocks.{8,16,22}.hook_resid_post`) |
-| SAE architecture / SAE 架构 | JumpReLU |
-| Dictionary size / 字典大小 | 16,384 (4x expansion) |
-| Input dimension / 输入维度 | 4,096 |
-| Training tokens / 训练 token 数 | ~49M |
-| Training steps / 训练步数 | 12,000 |
-| Learning rate / 学习率 | 5e-5 (constant + 1000-step warmup + 20% tail decay) |
-| Model precision / 模型精度 | float16 (autocast) |
-| SAE precision / SAE 精度 | float32 |
-| Context size / 上下文长度 | 256 |
-| Activation normalization / 激活归一化 | `expected_average_only_in` |
-| Training time / 训练时长 | 5~11.5 hours per layer on DGX Spark GB10 |
+| Parameter / 参数 | v0.3 (recommended) | v0.1 (legacy) |
+|---|---|---|
+| Base model / 基座模型 | `Mistral-7B-Instruct-v0.3` | `Mistral-7B-Instruct-v0.1` |
+| Training dataset / 训练数据 | `lmsys-chat-1m-chat-formatted` | `openwebtext` |
+| Target layers / 目标层 | L8, L16, L22 (`blocks.{8,16,22}.hook_resid_post`) | same |
+| SAE architecture / SAE 架构 | JumpReLU | same |
+| Dictionary size / 字典大小 | 16,384 (4x expansion) | same |
+| Input dimension / 输入维度 | 4,096 | same |
+| Training tokens / 训练 token 数 | ~49M | same |
+| Training steps / 训练步数 | 12,000 | same |
+| Learning rate / 学习率 | 5e-5 (constant + 1000-step warmup + 20% tail decay) | same |
+| Model precision / 模型精度 | float16 (autocast) | same |
+| SAE precision / SAE 精度 | float32 | same |
+| Context size / 上下文长度 | 256 | same |
+| Training time / 训练时长 | ~10h per layer on DGX Spark GB10 | same |
+
+**Why v0.3 + lmsys?** v0.1 SAE was trained on plain text (OpenWebText), but DAS intervention experiments run under chat template (`[INST]...[/INST]`). Activation distribution mismatch makes feature clamping unreliable. v0.3 + lmsys-chat-1m fixes this.
+
+**为什么用 v0.3 + lmsys？** v0.1 的 SAE 在纯文本上训的，但 DAS 干预实验在 chat template 下跑。激活分布不匹配导致特征 clamping 不可靠。v0.3 + lmsys 修复了这个问题。
 
 ## Validation Results / 验证结果
 
 ### Quantitative Metrics / 定量指标 (excluding BOS / 排除 BOS)
 
-| Layer / 层 | MSE / 均方误差 | L0 | JSON features / JSON 特征 |
+**v0.3 (recommended)**:
+
+| Layer / 层 | MSE | L0 | JSON punct ratio |
 |---|---|---|---|
-| **L8** (shallow / 浅层) | 0.0019 | 33.4 | ratio > 1e8 ✅ |
-| **L16** (middle / 中层) | 0.0116 | 56.9 | ratio > 1e8 ✅ |
-| **L22** (deep / 深层) | 0.0525 | 57.7 | ratio > 1e8 ✅ |
+| **L8** (shallow / 浅层) | 0.0016 | 71.2 | > 1e7 ✅ |
+| **L16** (middle / 中层) | 0.0101 | 65.2 | > 1e8 ✅ |
+| **L22** (deep / 深层) | 0.0409 | 76.6 | > 1e9 ✅ |
 
-MSE increases with depth (deeper layers encode denser information). All three layers have clean JSON structure features with activation ratios > 100 million.
+**v0.1 (legacy)**:
 
-MSE 随深度递增（深层编码更密集的信息）。三层都找到了干净的 JSON 结构特征，激活比值超过 1 亿。
+| Layer / 层 | MSE | L0 | JSON punct ratio |
+|---|---|---|---|
+| **L8** | 0.0019 | 33.4 | > 1e8 ✅ |
+| **L16** | 0.0116 | 56.9 | > 1e8 ✅ |
+| **L22** | 0.0525 | 57.7 | > 1e8 ✅ |
+
+MSE increases with depth (deeper layers encode denser information). JSON punctuation feature ratios increase with depth in v0.3 — deep layers encode stronger, more concept-level structural features.
+
+MSE 随深度递增（深层信息越密重建越难）。v0.3 的 JSON 标点特征 ratio 随深度递增——深层编码更强的概念级结构特征。
 
 ### Feature Interpretability / 特征可解释性
 
@@ -117,7 +147,9 @@ Full pipeline with TransformerLens / 完整流程：
 ```python
 from transformer_lens import HookedTransformer
 
-model = HookedTransformer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+# For v0.3 SAE, load v0.3 model (use v0.1 name for TransformerLens compatibility)
+# 用 v0.3 SAE 时加载 v0.3 模型（TransformerLens 兼容性需要用 v0.1 的名字）
+model = HookedTransformer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")  # see train_sae.py for v0.3 workaround
 _, cache = model.run_with_cache("Hello world", prepend_bos=True)
 
 layer_16_act = cache["blocks.16.hook_resid_post"]
@@ -138,6 +170,6 @@ reconstructed = sae.decode(features)
 
 ## License / 许可
 
-This SAE is released for research purposes. The base model (Mistral-7B-Instruct-v0.1) is subject to its own [license](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1).
+This SAE is released for research purposes. The base models are subject to their own licenses: [v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1), [v0.3](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3).
 
-本 SAE 用于研究目的开源。基座模型 Mistral-7B-Instruct-v0.1 遵循其自身的[许可协议](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)。
+本 SAE 用于研究目的开源。基座模型遵循各自的许可协议：[v0.1](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1)、[v0.3](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3)。
