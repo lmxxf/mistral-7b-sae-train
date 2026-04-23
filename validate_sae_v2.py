@@ -25,56 +25,76 @@ import json
 import torch
 import numpy as np
 
-# ===== 路径（默认值，可被命令行参数覆盖） =====
-MODEL_PATH = "/workspace/models/Mistral-7B-Instruct-v0.1"
+# ===== 模型配置 =====
+MODELS = {
+    "mistral": {
+        "path": "/workspace/models/Mistral-7B-Instruct-v0.3",
+        "name": "mistralai/Mistral-7B-Instruct-v0.1",  # TransformerLens 名字
+        "label": "Mistral-7B",
+        "needs_rope_patch": True,
+    },
+    "llama": {
+        "path": "/workspace/models/Llama-3.1-8B-Instruct/LLM-Research/Meta-Llama-3___1-8B-Instruct",
+        "name": "meta-llama/Llama-3.1-8B-Instruct",
+        "label": "Llama-3.1-8B",
+        "needs_rope_patch": False,
+    },
+}
+DEFAULT_MODEL = "mistral"
 DEFAULT_SAE_PATH = "/workspace/mistral-7b-sae-train/output/"
 DEFAULT_LAYER = 16
 
 
 # ===== 环境配置（复用 train_sae.py 的逻辑） =====
 
-def setup_environment():
+def setup_environment(model_cfg):
     """设置离线环境：rope_theta monkey-patch + HF cache 软链"""
-    import transformers
+    model_path = model_cfg["path"]
+    model_name = model_cfg["name"]
 
-    # 修补 transformers 5.x 兼容性：新版删了 rope_theta，TransformerLens 还在用
-    _orig_from_pretrained = transformers.AutoConfig.from_pretrained
+    if model_cfg.get("needs_rope_patch"):
+        import transformers
+        _orig_from_pretrained = transformers.AutoConfig.from_pretrained
 
-    @staticmethod
-    def _patched_from_pretrained(*args, **kwargs):
-        result = _orig_from_pretrained(*args, **kwargs)
-        # 有些调用方传 return_unused_kwargs=True，返回 (config, kwargs) tuple
-        if isinstance(result, tuple):
-            config = result[0]
-        else:
-            config = result
-        if not hasattr(config, "rope_theta"):
-            config_path = os.path.join(MODEL_PATH, "config.json")
-            with open(config_path) as f:
-                raw = json.load(f)
-            config.rope_theta = raw.get("rope_theta", 10000.0)
-        return result
+        @staticmethod
+        def _patched_from_pretrained(*args, **kwargs):
+            result = _orig_from_pretrained(*args, **kwargs)
+            if isinstance(result, tuple):
+                config = result[0]
+            else:
+                config = result
+            if not hasattr(config, "rope_theta"):
+                import json as _json
+                config_path = os.path.join(model_path, "config.json")
+                with open(config_path) as f:
+                    raw = _json.load(f)
+                config.rope_theta = raw.get("rope_theta", 10000.0)
+            config.vocab_size = 32768  # v0.3 词表
+            return result
 
-    transformers.AutoConfig.from_pretrained = _patched_from_pretrained
+        transformers.AutoConfig.from_pretrained = _patched_from_pretrained
 
-    # 把本地模型路径注入 HF cache，让 TransformerLens 的 AutoConfig 能离线找到
+    # 把本地模型路径注入 HF cache
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-    link_name = os.path.join(cache_dir, "models--mistralai--Mistral-7B-Instruct-v0.1")
-    if not os.path.exists(link_name):
-        os.makedirs(cache_dir, exist_ok=True)
-        os.makedirs(link_name, exist_ok=True)
-        snapshot_dir = os.path.join(link_name, "snapshots", "local")
-        os.makedirs(snapshot_dir, exist_ok=True)
-        for f in os.listdir(MODEL_PATH):
-            src = os.path.join(MODEL_PATH, f)
-            dst = os.path.join(snapshot_dir, f)
-            if not os.path.exists(dst) and os.path.isfile(src):
-                os.symlink(src, dst)
-        refs_dir = os.path.join(link_name, "refs")
-        os.makedirs(refs_dir, exist_ok=True)
-        with open(os.path.join(refs_dir, "main"), "w") as fp:
-            fp.write("local")
-        print(f"已创建 HF cache 软链: {link_name}")
+    cache_name = "models--" + model_name.replace("/", "--")
+    link_name = os.path.join(cache_dir, cache_name)
+    if os.path.exists(link_name):
+        import shutil
+        shutil.rmtree(link_name)
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(link_name, exist_ok=True)
+    snapshot_dir = os.path.join(link_name, "snapshots", "local")
+    os.makedirs(snapshot_dir, exist_ok=True)
+    for f in os.listdir(model_path):
+        src = os.path.join(model_path, f)
+        dst = os.path.join(snapshot_dir, f)
+        if not os.path.exists(dst) and os.path.isfile(src):
+            os.symlink(src, dst)
+    refs_dir = os.path.join(link_name, "refs")
+    os.makedirs(refs_dir, exist_ok=True)
+    with open(os.path.join(refs_dir, "main"), "w") as fp:
+        fp.write("local")
+    print(f"已创建 HF cache 软链: {link_name}")
 
 
 # ===== 测试文本 =====
@@ -104,19 +124,22 @@ NATURAL_TEXTS = [
 ]
 
 
-def load_model():
-    """加载 Mistral-7B 模型（HookedTransformer）"""
+def load_model(model_cfg):
+    """加载模型（HookedTransformer）"""
     from transformers import AutoModelForCausalLM
     from transformer_lens import HookedTransformer
 
-    print("加载 HF 模型...")
+    model_path = model_cfg["path"]
+    model_name = model_cfg["name"]
+
+    print(f"加载 HF 模型: {model_path}")
     hf_model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH, dtype=torch.float16
+        model_path, torch_dtype=torch.float16
     )
 
     print("转换为 HookedTransformer...")
     model = HookedTransformer.from_pretrained(
-        "mistralai/Mistral-7B-Instruct-v0.1",
+        model_name,
         hf_model=hf_model,
         center_writing_weights=False,
         device="cuda",
@@ -124,7 +147,6 @@ def load_model():
     )
     model.eval()
 
-    # 释放 HF 模型，节省内存
     del hf_model
     torch.cuda.empty_cache()
 
@@ -388,28 +410,30 @@ def validate_interpretability(model, sae, json_texts, natural_texts, hook_name):
 # ===== 主流程 =====
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate SAE for Mistral-7B")
+    parser = argparse.ArgumentParser(description="Validate SAE")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL,
+                        choices=list(MODELS.keys()),
+                        help=f"模型选择，默认 {DEFAULT_MODEL}")
     parser.add_argument("--layer", type=int, default=DEFAULT_LAYER,
                         help=f"目标层，默认 {DEFAULT_LAYER}")
     parser.add_argument("--sae-path", type=str, default=DEFAULT_SAE_PATH,
                         help=f"SAE 权重目录，默认 {DEFAULT_SAE_PATH}")
     args = parser.parse_args()
 
+    model_cfg = MODELS[args.model]
     layer = args.layer
     sae_path = args.sae_path
     hook_name = f"blocks.{layer}.hook_resid_post"
 
     print("\n" + "=" * 60)
-    print(f"  Mistral-7B Layer {layer} SAE 验证 (v2: 排除 BOS)")
+    print(f"  {model_cfg['label']} Layer {layer} SAE 验证 (v2: 排除 BOS)")
     print(f"  SAE 路径: {sae_path}")
     print(f"  Hook: {hook_name}")
     print("=" * 60 + "\n")
 
-    # 环境配置
-    setup_environment()
+    setup_environment(model_cfg)
 
-    # 加载模型和 SAE
-    model = load_model()
+    model = load_model(model_cfg)
     sae = load_sae(sae_path)
 
     # 收集所有文本的激活（验证 1 和 2 共用），已排除 BOS

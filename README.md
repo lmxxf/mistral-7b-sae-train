@@ -1,8 +1,8 @@
-# Mistral-7B Sparse Autoencoders (JumpReLU) — Layer 8, 16, 22
+# SAE for Structured Format Dissociation — Mistral-7B & Llama-3.1-8B
 
-Sparse Autoencoders (SAE) trained on residual stream activations of Mistral-7B-Instruct at three layers (shallow / middle / deep), using the JumpReLU architecture from Anthropic's *Scaling Monosemanticity*.
+Sparse Autoencoders (SAE) trained on residual stream activations of **Mistral-7B-Instruct** and **Llama-3.1-8B-Instruct** at three layers (L8/L16/L22), using JumpReLU architecture from Anthropic's *Scaling Monosemanticity*. Two models × three layers = **six SAEs** for cross-model replication.
 
-在 Mistral-7B-Instruct 的三层残差流（浅层/中层/深层）上训练的稀疏自编码器（SAE），使用 Anthropic *Scaling Monosemanticity* 论文中的 JumpReLU 架构。
+在 **Mistral-7B-Instruct** 和 **Llama-3.1-8B-Instruct** 的三层残差流（L8/L16/L22）上训练的稀疏自编码器（SAE），使用 Anthropic *Scaling Monosemanticity* 论文中的 JumpReLU 架构。两个模型 × 三层 = **六个 SAE**，用于跨模型复现。
 
 ## Weights / 权重
 
@@ -26,6 +26,16 @@ Trained on **Mistral-7B-Instruct-v0.1** with **OpenWebText**. Kept for reference
 - Layer 16: [lmxxf/mistral-7b-sae-layer16](https://huggingface.co/lmxxf/mistral-7b-sae-layer16)
 - Layer 22: [lmxxf/mistral-7b-sae-layer22](https://huggingface.co/lmxxf/mistral-7b-sae-layer22)
 
+### Llama-3.1-8B-Instruct (cross-model replication / 跨模型复现)
+
+Trained on **Llama-3.1-8B-Instruct** with **lmsys-chat-1m** chat-formatted data.
+
+基于 **Llama-3.1-8B-Instruct** + **lmsys-chat-1m** chat 格式数据训练。
+
+- Layer 8: [lmxxf/llama31-8b-sae-layer8](https://huggingface.co/lmxxf/llama31-8b-sae-layer8)
+- Layer 16: [lmxxf/llama31-8b-sae-layer16](https://huggingface.co/lmxxf/llama31-8b-sae-layer16)
+- Layer 22: [lmxxf/llama31-8b-sae-layer22](https://huggingface.co/lmxxf/llama31-8b-sae-layer22)
+
 ## Motivation / 动机
 
 The 4096-dim residual stream of Mistral-7B encodes thousands of concepts in superposition — JSON structure, natural language semantics, syntax, etc. all tangled together. This SAE expands the residual stream to 16384 dimensions, disentangling these concepts into distinct sparse features suitable for targeted intervention.
@@ -34,21 +44,18 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 
 ## Training Configuration / 训练配置
 
-| Parameter / 参数 | v0.3 (recommended) | v0.1 (legacy) |
-|---|---|---|
-| Base model / 基座模型 | `Mistral-7B-Instruct-v0.3` | `Mistral-7B-Instruct-v0.1` |
-| Training dataset / 训练数据 | `lmsys-chat-1m-chat-formatted` | `openwebtext` |
-| Target layers / 目标层 | L8, L16, L22 (`blocks.{8,16,22}.hook_resid_post`) | same |
-| SAE architecture / SAE 架构 | JumpReLU | same |
-| Dictionary size / 字典大小 | 16,384 (4x expansion) | same |
-| Input dimension / 输入维度 | 4,096 | same |
-| Training tokens / 训练 token 数 | ~49M | same |
-| Training steps / 训练步数 | 12,000 | same |
-| Learning rate / 学习率 | 5e-5 (constant + 1000-step warmup + 20% tail decay) | same |
-| Model precision / 模型精度 | float16 (autocast) | same |
-| SAE precision / SAE 精度 | float32 | same |
-| Context size / 上下文长度 | 256 | same |
-| Training time / 训练时长 | ~10h per layer on DGX Spark GB10 | same |
+| Parameter / 参数 | Mistral v0.3 | Llama 3.1 | Mistral v0.1 (legacy) |
+|---|---|---|---|
+| Base model / 基座模型 | `Mistral-7B-Instruct-v0.3` | `Llama-3.1-8B-Instruct` | `Mistral-7B-Instruct-v0.1` |
+| Training dataset / 训练数据 | lmsys-chat-1m | lmsys-chat-1m | openwebtext |
+| Target layers / 目标层 | L8, L16, L22 | same | same |
+| SAE architecture / 架构 | JumpReLU | same | same |
+| Dictionary size / 字典大小 | 16,384 (4x) | same | same |
+| Input dimension / 输入维度 | 4,096 | same | same |
+| Training tokens | ~49M | same | same |
+| Training steps | 12,000 | same | same |
+| Learning rate | 5e-5 (constant + warmup + decay) | same | same |
+| Training time / 训练时长 | ~10h/layer | 5~11h/layer | ~10h/layer |
 
 **Why v0.3 + lmsys?** v0.1 SAE was trained on plain text (OpenWebText), but DAS intervention experiments run under chat template (`[INST]...[/INST]`). Activation distribution mismatch makes feature clamping unreliable. v0.3 + lmsys-chat-1m fixes this.
 
@@ -66,6 +73,14 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 | **L16** (middle / 中层) | 0.0101 | 65.2 | > 1e8 ✅ |
 | **L22** (deep / 深层) | 0.0409 | 76.6 | > 1e9 ✅ |
 
+**Llama-3.1-8B-Instruct (cross-model replication)**:
+
+| Layer / 层 | MSE | L0 | JSON punct ratio |
+|---|---|---|---|
+| **L8** | 0.0046 | 28.7 | > 1e7 ✅ |
+| **L16** | 0.0124 | 35.5 | > 1e8 ✅ |
+| **L22** | 0.0394 | 40.2 | > 1e8 ✅ |
+
 **v0.1 (legacy)**:
 
 | Layer / 层 | MSE | L0 | JSON punct ratio |
@@ -74,9 +89,9 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 | **L16** | 0.0116 | 56.9 | > 1e8 ✅ |
 | **L22** | 0.0525 | 57.7 | > 1e8 ✅ |
 
-MSE increases with depth (deeper layers encode denser information). JSON punctuation feature ratios increase with depth in v0.3 — deep layers encode stronger, more concept-level structural features.
+Both models show: MSE increases with depth (deeper = denser info), clean JSON structure feature separation at all layers. Llama is ~2x more sparse than Mistral (L0 28-40 vs 65-77), possibly due to its larger tokenizer (128K vs 32K vocab) encoding more info per token.
 
-MSE 随深度递增（深层信息越密重建越难）。v0.3 的 JSON 标点特征 ratio 随深度递增——深层编码更强的概念级结构特征。
+两个模型都表现出：MSE 随深度递增，所有层都有干净的 JSON 结构特征分离。Llama 比 Mistral 稀疏约 2 倍（L0 28-40 vs 65-77），可能因为 128K 词表让每个 token 承载更多信息。
 
 ### Feature Interpretability / 特征可解释性
 
