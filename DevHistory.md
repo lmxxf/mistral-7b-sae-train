@@ -522,24 +522,83 @@ Llama 整体比 Mistral 稀疏约一倍——同样 4x expansion，Llama 每 tok
 - ✅ Llama-3.1-8B-Instruct 三层 SAE 训练 + 验证 + 上传完成
 - **两模型六个 SAE 全部就位**
 
+---
+
+## 2026-04-25 ~ 04-27
+
+### Qwen3-8B SAE 训练（第三个模型）
+
+**目的**：ZL 新增需求，从两模型扩展到三模型跨模型复现。
+
+**层选择**：基于 DAS 层扫描结果（Qwen3 有 36 层）：
+- L9（25%）：浅层参照
+- L22（61%）：DAS peak（99% 打穿率），最重要
+- L27（75%）：深层，DAS 次峰（91.7%）
+
+**踩坑**：
+- TransformerLens 虽然列表里有 Qwen3-8B，但 transformers 5.x 删了 `rope_theta` → 加 monkey-patch（和 Mistral 同一个问题）
+- Qwen3 需要 `trust_remote_code=True`
+- L9 训完后 GPU 掉线（Spark 老毛病），docker restart 恢复
+- lmsys 数据集预处理必须用 `enable_thinking=False`（硬开关），否则 Qwen3 会加 thinking 标记
+
+**训练时长**：L9 5h + L22 10.6h + L27 ~10h ≈ 26h
+
+### Qwen3 三层验证结果
+
+| 层 | MSE | EV | L0 | JSON 标点 ratio |
+|---|---|---|---|---|
+| L9 | 0.40 | 0.51 | 14.6 | > 1e7 ✅ |
+| L22 | 1.98 | 0.70 | 29.6 | > 1e8 ✅ |
+| L27 | 10.57 | 0.71 | 31.5 | > 1e8 ✅ |
+
+**MSE 比 Mistral/Llama 大 100 倍的原因**：Qwen3 残差流激活值的方差本身就大 100 倍（L22 方差 6.58 vs Mistral 0.019）。EV（解释方差比）在 0.5~0.7，和其他模型可比。跨模型对比应看 EV 不看 MSE。
+
+**三模型 L0 对比**：
+
+| 层 | Mistral v0.3 | Llama 3.1 | Qwen3 |
+|---|---|---|---|
+| 浅层 | 71.2 | 28.7 | 14.6 |
+| 中层 | 65.2 | 35.5 | 29.6 |
+| 深层 | 76.6 | 40.2 | 31.5 |
+
+Qwen3 最稀疏（词表 152K > Llama 128K > Mistral 32K：词表越大每个 token 承载越多信息，需要的特征越少）。
+
+**三个模型九个 SAE 都能干净分离 JSON 结构特征，跨模型复现成立。**
+
+### Qwen3 HuggingFace 上传
+
+- [lmxxf/qwen3-8b-sae-layer9](https://huggingface.co/lmxxf/qwen3-8b-sae-layer9)
+- [lmxxf/qwen3-8b-sae-layer22](https://huggingface.co/lmxxf/qwen3-8b-sae-layer22)
+- [lmxxf/qwen3-8b-sae-layer27](https://huggingface.co/lmxxf/qwen3-8b-sae-layer27)
+
+### 当前状态（2026-04-27）
+
+- ✅ Mistral-7B-Instruct-v0.3 三层 SAE ✅
+- ✅ Llama-3.1-8B-Instruct 三层 SAE ✅
+- ✅ Qwen3-8B 三层 SAE ✅
+- **三模型九个 SAE 全部就位**
+
 ### 文件（更新）
 
 | 文件 | 用途 |
 |---|---|
 | `train_sae.py` | Mistral SAE 训练脚本（v0.3 + lmsys） |
-| `train_sae_llama.py` | **Llama SAE 训练脚本（新增）** |
+| `train_sae_llama.py` | Llama SAE 训练脚本 |
+| `train_sae_qwen3.py` | **Qwen3 SAE 训练脚本（新增）** |
 | `prepare_lmsys_dataset.py` | lmsys 数据集预处理（Mistral） |
-| `prepare_lmsys_llama.py` | **lmsys 数据集预处理（Llama，新增）** |
+| `prepare_lmsys_llama.py` | lmsys 数据集预处理（Llama） |
+| `prepare_lmsys_qwen3.py` | **lmsys 数据集预处理（Qwen3，新增）** |
 | `validate_sae.py` | SAE 验证 v1 |
-| `validate_sae_v2.py` | SAE 验证 v2（**已改：支持 --model llama**） |
+| `validate_sae_v2.py` | SAE 验证 v2（**支持 --model mistral/llama/qwen3**） |
 | `intervene_sae.py` | SAE 特征干预实验（单层 L16） |
 | `intervene_multilayer.py` | 三层联合干预实验 |
 | `output/` | Layer 16 SAE 权重（旧版 v0.1） |
-| `sae_checkpoints/mistral7b_sae_L{8,16,22}_64k/` | **Mistral v0.3 SAE 权重 ✅** |
-| `sae_checkpoints/llama31_8b_sae_L{8,16,22}_16k/` | **Llama 3.1 SAE 权重 ✅** |
+| `sae_checkpoints/mistral7b_sae_L{8,16,22}_64k/` | Mistral v0.3 SAE 权重 ✅ |
+| `sae_checkpoints/llama31_8b_sae_L{8,16,22}_16k/` | Llama 3.1 SAE 权重 ✅ |
+| `sae_checkpoints/qwen3_8b_sae_L{9,22,27}_16k/` | **Qwen3 SAE 权重 ✅** |
 
 ### 下一步
 
-- ZL 用新 SAE 重跑干预实验（Mistral + Llama 跨模型对比）
+- ZL 用九个 SAE 跑干预实验（三模型跨模型对比）
 - ZL 同步推 format specificity 对照实验（JSON vs XML/YAML）
 - EMNLP 2026 主会投稿（5/25 截止）

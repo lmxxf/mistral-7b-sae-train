@@ -39,6 +39,12 @@ MODELS = {
         "label": "Llama-3.1-8B",
         "needs_rope_patch": False,
     },
+    "qwen3": {
+        "path": "/workspace/models/Qwen3-8B/Qwen/Qwen3-8B",
+        "name": "Qwen/Qwen3-8B",
+        "label": "Qwen3-8B",
+        "needs_rope_patch": True,
+    },
 }
 DEFAULT_MODEL = "mistral"
 DEFAULT_SAE_PATH = "/workspace/mistral-7b-sae-train/output/"
@@ -63,13 +69,13 @@ def setup_environment(model_cfg):
                 config = result[0]
             else:
                 config = result
+            import json as _json
+            config_path = os.path.join(model_path, "config.json")
+            with open(config_path) as f:
+                raw = _json.load(f)
             if not hasattr(config, "rope_theta"):
-                import json as _json
-                config_path = os.path.join(model_path, "config.json")
-                with open(config_path) as f:
-                    raw = _json.load(f)
                 config.rope_theta = raw.get("rope_theta", 10000.0)
-            config.vocab_size = 32768  # v0.3 词表
+            config.vocab_size = raw.get("vocab_size", config.vocab_size)
             return result
 
         transformers.AutoConfig.from_pretrained = _patched_from_pretrained
@@ -132,9 +138,11 @@ def load_model(model_cfg):
     model_path = model_cfg["path"]
     model_name = model_cfg["name"]
 
+    trust_remote = "qwen" in model_name.lower()
+
     print(f"加载 HF 模型: {model_path}")
     hf_model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.float16
+        model_path, torch_dtype=torch.float16, trust_remote_code=trust_remote
     )
 
     print("转换为 HookedTransformer...")
@@ -144,6 +152,7 @@ def load_model(model_cfg):
         center_writing_weights=False,
         device="cuda",
         dtype=torch.float16,
+        trust_remote_code=trust_remote,
     )
     model.eval()
 

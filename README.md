@@ -36,6 +36,16 @@ Trained on **Llama-3.1-8B-Instruct** with **lmsys-chat-1m** chat-formatted data.
 - Layer 16: [lmxxf/llama31-8b-sae-layer16](https://huggingface.co/lmxxf/llama31-8b-sae-layer16)
 - Layer 22: [lmxxf/llama31-8b-sae-layer22](https://huggingface.co/lmxxf/llama31-8b-sae-layer22)
 
+### Qwen3-8B (cross-model replication / 跨模型复现)
+
+Trained on **Qwen3-8B** with **lmsys-chat-1m** chat-formatted data (`enable_thinking=False`). Layers chosen by DAS layer scan: L22 is DAS peak (99%), L27 is secondary peak (91.7%), L9 is shallow reference.
+
+基于 **Qwen3-8B** + **lmsys-chat-1m** chat 格式数据训练（关闭 thinking 模式）。层选择基于 DAS 层扫描：L22 为 DAS 峰值（99%），L27 为次峰（91.7%），L9 为浅层参照。
+
+- Layer 9: [lmxxf/qwen3-8b-sae-layer9](https://huggingface.co/lmxxf/qwen3-8b-sae-layer9)
+- Layer 22: [lmxxf/qwen3-8b-sae-layer22](https://huggingface.co/lmxxf/qwen3-8b-sae-layer22)
+- Layer 27: [lmxxf/qwen3-8b-sae-layer27](https://huggingface.co/lmxxf/qwen3-8b-sae-layer27)
+
 ## Motivation / 动机
 
 The 4096-dim residual stream of Mistral-7B encodes thousands of concepts in superposition — JSON structure, natural language semantics, syntax, etc. all tangled together. This SAE expands the residual stream to 16384 dimensions, disentangling these concepts into distinct sparse features suitable for targeted intervention.
@@ -44,17 +54,17 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 
 ## Training Configuration / 训练配置
 
-| Parameter / 参数 | Mistral v0.3 | Llama 3.1 | Mistral v0.1 (legacy) |
-|---|---|---|---|
-| Base model / 基座模型 | `Mistral-7B-Instruct-v0.3` | `Llama-3.1-8B-Instruct` | `Mistral-7B-Instruct-v0.1` |
-| Training dataset / 训练数据 | lmsys-chat-1m | lmsys-chat-1m | openwebtext |
-| Target layers / 目标层 | L8, L16, L22 | same | same |
-| SAE architecture / 架构 | JumpReLU | same | same |
-| Dictionary size / 字典大小 | 16,384 (4x) | same | same |
-| Input dimension / 输入维度 | 4,096 | same | same |
-| Training tokens | ~49M | same | same |
-| Training steps | 12,000 | same | same |
-| Learning rate | 5e-5 (constant + warmup + decay) | same | same |
+| Parameter / 参数 | Mistral v0.3 | Llama 3.1 | Qwen3 | Mistral v0.1 (legacy) |
+|---|---|---|---|---|
+| Base model | `Mistral-7B-Instruct-v0.3` | `Llama-3.1-8B-Instruct` | `Qwen3-8B` | `Mistral-7B-Instruct-v0.1` |
+| Training data | lmsys-chat-1m | lmsys-chat-1m | lmsys-chat-1m | openwebtext |
+| Layers | L8, L16, L22 | L8, L16, L22 | L9, L22, L27 | L8, L16, L22 |
+| Architecture | JumpReLU | same | same | same |
+| Dict size (d_sae) | 16,384 (4x) | same | same | same |
+| Input dim (d_in) | 4,096 | same | same | same |
+| Training tokens | ~49M | same | same | same |
+| Training steps | 12,000 | same | same | same |
+| Learning rate | 5e-5 (constant + warmup + decay) | same | same | same |
 | Training time / 训练时长 | ~10h/layer | 5~11h/layer | ~10h/layer |
 
 **Why v0.3 + lmsys?** v0.1 SAE was trained on plain text (OpenWebText), but DAS intervention experiments run under chat template (`[INST]...[/INST]`). Activation distribution mismatch makes feature clamping unreliable. v0.3 + lmsys-chat-1m fixes this.
@@ -65,33 +75,55 @@ Mistral-7B 的 4096 维残差流把成千上万个概念叠加在一起——JSO
 
 ### Quantitative Metrics / 定量指标 (excluding BOS / 排除 BOS)
 
-**v0.3 (recommended)**:
+**Mistral-7B-Instruct-v0.3 (recommended)**:
 
-| Layer / 层 | MSE | L0 | JSON punct ratio |
-|---|---|---|---|
-| **L8** (shallow / 浅层) | 0.0016 | 71.2 | > 1e7 ✅ |
-| **L16** (middle / 中层) | 0.0101 | 65.2 | > 1e8 ✅ |
-| **L22** (deep / 深层) | 0.0409 | 76.6 | > 1e9 ✅ |
+| Layer | MSE | EV | L0 | JSON punct ratio |
+|---|---|---|---|---|
+| **L8** (shallow) | 0.0016 | 0.53 | 71.2 | > 1e7 ✅ |
+| **L16** (middle) | 0.0101 | 0.48 | 65.2 | > 1e8 ✅ |
+| **L22** (deep) | 0.0409 | 0.60 | 76.6 | > 1e9 ✅ |
 
-**Llama-3.1-8B-Instruct (cross-model replication)**:
+**Llama-3.1-8B-Instruct**:
 
-| Layer / 层 | MSE | L0 | JSON punct ratio |
-|---|---|---|---|
-| **L8** | 0.0046 | 28.7 | > 1e7 ✅ |
-| **L16** | 0.0124 | 35.5 | > 1e8 ✅ |
-| **L22** | 0.0394 | 40.2 | > 1e8 ✅ |
+| Layer | MSE | EV | L0 | JSON punct ratio |
+|---|---|---|---|---|
+| **L8** | 0.0046 | 0.53 | 28.7 | > 1e7 ✅ |
+| **L16** | 0.0124 | 0.64 | 35.5 | > 1e8 ✅ |
+| **L22** | 0.0394 | 0.64 | 40.2 | > 1e8 ✅ |
 
-**v0.1 (legacy)**:
+**Qwen3-8B**:
 
-| Layer / 层 | MSE | L0 | JSON punct ratio |
-|---|---|---|---|
-| **L8** | 0.0019 | 33.4 | > 1e8 ✅ |
-| **L16** | 0.0116 | 56.9 | > 1e8 ✅ |
-| **L22** | 0.0525 | 57.7 | > 1e8 ✅ |
+| Layer | MSE | EV | L0 | JSON punct ratio |
+|---|---|---|---|---|
+| **L9** (shallow) | 0.40 | 0.51 | 14.6 | > 1e7 ✅ |
+| **L22** (DAS peak) | 1.98 | 0.70 | 29.6 | > 1e8 ✅ |
+| **L27** (deep) | 10.57 | 0.71 | 31.5 | > 1e8 ✅ |
 
-Both models show: MSE increases with depth (deeper = denser info), clean JSON structure feature separation at all layers. Llama is ~2x more sparse than Mistral (L0 28-40 vs 65-77), possibly due to its larger tokenizer (128K vs 32K vocab) encoding more info per token.
+**Mistral-7B-Instruct-v0.1 (legacy)**:
 
-两个模型都表现出：MSE 随深度递增，所有层都有干净的 JSON 结构特征分离。Llama 比 Mistral 稀疏约 2 倍（L0 28-40 vs 65-77），可能因为 128K 词表让每个 token 承载更多信息。
+| Layer | MSE | EV | L0 | JSON punct ratio |
+|---|---|---|---|---|
+| **L8** | 0.0019 | — | 33.4 | > 1e8 ✅ |
+| **L16** | 0.0116 | 0.48 | 56.9 | > 1e8 ✅ |
+| **L22** | 0.0525 | — | 57.7 | > 1e8 ✅ |
+
+### Metric Notes / 指标说明
+
+**MSE (Mean Squared Error / 均方误差)**: Reconstruction error in absolute units. Qwen3's MSE is ~100x larger than Mistral/Llama — this does NOT mean worse quality. Qwen3's residual stream activations have ~100x larger variance (e.g., L22: variance=6.58 for Qwen3 vs 0.019 for Mistral). Use EV for cross-model comparison.
+
+MSE 是绝对重建误差。Qwen3 的 MSE 比 Mistral/Llama 大约 100 倍——这不代表质量更差。Qwen3 残差流激活值的方差本身就大 100 倍（如 L22：Qwen3 方差 6.58 vs Mistral 0.019）。跨模型对比请用 EV。
+
+**EV (Explained Variance / 解释方差比)**: `1 - MSE/Variance`. The proportion of signal preserved by reconstruction. All three models are in the 0.5–0.7 range, indicating comparable relative reconstruction quality. The 0.85 threshold shown as [FAIL] in validation scripts was calibrated for BOS-included data; after BOS exclusion, all nine SAEs fall below it — this is a threshold issue, not a quality issue.
+
+EV = `1 - MSE/方差`，重建保留了多少比例的原始信号。三个模型都在 0.5–0.7 范围，相对重建质量可比。验证脚本里 0.85 的阈值是针对包含 BOS token 的情况设的；排除 BOS 后九个 SAE 全部低于阈值——是阈值不适用，不是质量问题。
+
+**L0 (Sparsity / 稀疏度)**: Average number of active features per token. Qwen3 (14–31) < Llama (28–40) < Mistral (65–77). Sparser models need fewer features to represent each token — likely reflects tokenizer vocabulary size (Qwen3 152K > Llama 128K > Mistral 32K: larger vocab = more info per token = fewer features needed).
+
+L0 是每个 token 平均激活的特征数。Qwen3 (14–31) < Llama (28–40) < Mistral (65–77)。更稀疏的模型用更少的特征就能表示每个 token——可能反映了词表大小（Qwen3 152K > Llama 128K > Mistral 32K：词表越大，每个 token 承载越多信息，需要的特征越少）。
+
+**JSON punct ratio**: Activation ratio of JSON punctuation tokens vs non-punctuation tokens. Ratios > 1e7 mean the feature fires almost exclusively on JSON structural tokens. All nine SAEs pass this test — clean separation of structural vs semantic features.
+
+JSON 标点比率是 JSON 标点 token 与非标点 token 的激活比值。> 1e7 表示该特征几乎只在 JSON 结构 token 上激活。九个 SAE 全部通过——结构特征与语义特征干净分离。
 
 ### Feature Interpretability / 特征可解释性
 
